@@ -688,8 +688,10 @@ void System::SaveKeyPointsAndMapPoints(const std::string &filename) {
         set<MapPoint*> mappoints = pKF->GetMapPoints();
 
         Sophus::SE3f Twc = pKF->GetPoseInverse();
-        Eigen::Quaternionf q = Twc.unit_quaternion();
-        Eigen::Vector3f t = Twc.translation();
+        Sophus::SE3f Tcw = Twc.inverse();
+
+        Eigen::Quaternionf q = Tcw.unit_quaternion();
+        Eigen::Vector3f t = Tcw.translation();
 
         f << pKF->mnFrameId << " " << std::setprecision(20) << q.w() << " " << q.x() << " " << q.y() << " " << q.z() << " " << t(0) << " " << t(1) << " " << t(2)<< " " << 1;
 
@@ -769,10 +771,12 @@ void System::SavePointcloud(const string &filename) {
             // Calculate reprojection error for the map point
             float reprojectionError = System::CalculateReprojectionErrorForMapPoint(pMP);
 
-            // Calculate the average color of associated 2D points
-            cv::Scalar avgColor(0, 0, 0);
-            int count = 0;
+            cv::Scalar color(0, 0, 0);
+            bool hasColor = false;
+
+            // Check if color information exists in the map
             if (point3d_to_2d_map.find(key_3d) != point3d_to_2d_map.end()) {
+                // Iterate through the 2D observations of the 3D point
                 for (const auto& pair : point3d_to_2d_map[key_3d]) {
                     // Get the frame index and feature point index
                     int frameIndex = pair.first;
@@ -788,44 +792,41 @@ void System::SavePointcloud(const string &filename) {
                         // Ensure the feature point is within the image boundaries
                         if (pt.x >= 0 && pt.x < img.cols && pt.y >= 0 && pt.y < img.rows) {
                             // Get the color at the 2D point
-                            cv::Vec3b color = img.at<cv::Vec3b>(cvRound(pt.y), cvRound(pt.x));
-                            // Calculate the average color
-                            avgColor += cv::Scalar(color[0], color[1], color[2]);
-                            count++;
+                            cv::Vec3b colorVec = img.at<cv::Vec3b>(cvRound(pt.y), cvRound(pt.x));
+                            color = cv::Scalar(colorVec[0], colorVec[1], colorVec[2]);
+                            hasColor = true;
+                            break; // Use the first valid color information found
                         }
                     }
                 }
             }
-            // Calculate the average color if there are any valid observations
-            if (count > 0) {
-                avgColor[0] /= count; // Blue
-                avgColor[1] /= count; // Green
-                avgColor[2] /= count; // Red
-            }
 
-            // Write the point coordinates and average color to the file
-            outFile << pint3d_id << " " << std::setprecision(20) << pos.x << " " << pos.y << " " << pos.z << " "
-                    << static_cast<int>(avgColor[2]) << " " // Red
-                    << static_cast<int>(avgColor[1]) << " " // Green
-                    << static_cast<int>(avgColor[0]) << " " << reprojectionError; // Blue
+            // Write the point coordinates and color to the file if color is found
+            if (hasColor) {
+                outFile << pint3d_id << " " << std::setprecision(20) << pos.x << " " << pos.y << " " << pos.z << " "
+                        << static_cast<int>(color[2]) << " " // Red
+                        << static_cast<int>(color[1]) << " " // Green
+                        << static_cast<int>(color[0]) << " " << reprojectionError; // Blue
 
-            // Write the associated 2D points to the file
-            for (const auto& pair : point3d_to_2d_map[key_3d]) {
-                // Get the frame index and feature point index
-                int frameIndex = pair.first;
-                int featureIndex = pair.second;
+                // Write the associated 2D points to the file
+                for (const auto& pair : point3d_to_2d_map[key_3d]) {
+                    // Get the frame index and feature point index
+                    int frameIndex = pair.first;
+                    int featureIndex = pair.second;
 
-                // Get the corresponding keyframe
-                KeyFrame* pObsKF = vpMapPoints[frameIndex]->GetReferenceKeyFrame();
-                if (pObsKF) {
-                    // Write the frame index and feature point index
-                    outFile << " " << frameIndex << " " << featureIndex;
+                    // Get the corresponding keyframe
+                    KeyFrame* pObsKF = vpMapPoints[frameIndex]->GetReferenceKeyFrame();
+                    if (pObsKF) {
+                        // Write the frame index and feature point index
+                        outFile << " " << frameIndex << " " << featureIndex;
+                    }
                 }
-            }
 
-            outFile << endl;
+                outFile << endl;
+            }
         }
     }
+
 
     // Close the file
     outFile.close();
@@ -917,6 +918,8 @@ void System::SaveKeyFrameTrajectoryTUM(const string &filename)
             continue;
 
         Sophus::SE3f Twc = pKF->GetPoseInverse();
+
+        // 获取四元数和平移向量
         Eigen::Quaternionf q = Twc.unit_quaternion();
         Eigen::Vector3f t = Twc.translation();
         f << i << " " << setprecision(6) << q.w() << " " << q.x() << " " << q.y() << " " << q.z() << " " << t(0) << " " << t(1) << " " << t(2) << pKF->mTimeStamp << setprecision(7) << " " << endl;
